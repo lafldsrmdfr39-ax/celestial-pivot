@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>XelCore • Mark VIII — Celestial Pivot</title>
+    <title>XelCore • Mark VIII — Deployment Array</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     <style>
         :root { --cyan: #00f3ff; --red: #ff3c00; --bg: #010103; }
-        body { margin: 0; overflow: hidden; background: var(--bg); font-family: 'Segoe UI', sans-serif; cursor: none; }
+        body { margin: 0; overflow: hidden; background: var(--bg); font-family: 'Segoe UI', Tahoma, sans-serif; cursor: none; }
         
         #hud-header {
             position: absolute; top: 0; width: 100%; padding: 25px 45px;
@@ -20,6 +20,32 @@
 
         .status-box { border-left: 3px solid var(--cyan); padding-left: 15px; background: rgba(0, 243, 255, 0.03); }
         .status-box h1 { margin: 0; font-size: 1.4rem; font-weight: 900; }
+
+        /* PANEL DE COMANDOS INFERIOR - ESTILO XELCORE */
+        #command-dock {
+            position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 15px; z-index: 50;
+        }
+
+        .xel-btn {
+            width: 180px; height: 55px;
+            background: rgba(0, 243, 255, 0.05);
+            border: 1px solid var(--cyan);
+            color: var(--cyan);
+            display: flex; align-items: center; justify-content: center;
+            text-transform: uppercase; letter-spacing: 2px; font-weight: 800;
+            font-size: 0.7rem; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: blur(8px);
+            box-shadow: inset 0 0 10px rgba(0, 243, 255, 0.1);
+        }
+
+        .xel-btn.hover-active {
+            background: rgba(0, 243, 255, 0.25);
+            box-shadow: 0 0 25px var(--cyan), inset 0 0 15px var(--cyan);
+            color: #ffffff;
+            transform: translateY(-5px) scale(1.05);
+            border-width: 2px;
+        }
 
         #cursor {
             position: absolute; width: 35px; height: 35px;
@@ -41,6 +67,7 @@
         }
 
         video { display: none; }
+        canvas { display: block; }
     </style>
 </head>
 <body>
@@ -48,12 +75,20 @@
 <div id="hud-header">
     <div class="status-box">
         <h1>XELCORE MK-VIII</h1>
-        <p>ORBITAL SYSTEM: STABILIZED | AXIS LOCK</p>
+        <p>ORBITAL SYSTEM: DEPLOYED | COMMAND DOCK ACTIVE</p>
     </div>
     <div style="text-align: right;">
         <p>ZOOM LENS: <span id="zoom-val">1.0</span>x</p>
         <p>PITCH LIMIT: <span id="vel-val">±35°</span></p>
     </div>
+</div>
+
+<!-- DOCK DE COMANDOS ESTÁTICO -->
+<div id="command-dock">
+    <div class="xel-btn" data-url="https://lafldsrmdfr39-ax.github.io/void-defender/">Void Defender</div>
+    <div class="xel-btn" data-url="https://lafldsrmdfr39-ax.github.io/celestial-pivot/">Celestial Pivot</div>
+    <div class="xel-btn" data-url="https://lafldsrmdfr39-ax.github.io/neural-keyboard/">Neural Keyboard</div>
+    <div class="xel-btn" data-url="https://lafldsrmdfr39-ax.github.io/nexus/">Nexus Core</div>
 </div>
 
 <div id="cursor"></div>
@@ -63,7 +98,7 @@
 <canvas id="three-canvas"></canvas>
 
 <script>
-    /** XELCORE MK-VIII: SISTEMA SOLAR TÁCTICO - ESTABILIZACIÓN DE EJES **/
+    /** XELCORE MK-VIII: INTEGRACIÓN DE DOCK E INTERACCIÓN HÁPTICA POR CÁMARA **/
     
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -99,7 +134,7 @@
         ctx.shadowColor = 'rgba(0, 243, 255, 1)';
         ctx.shadowBlur = isHover ? 25 : 5;
         ctx.fillStyle = isHover ? '#ffffff' : '#00f3ff';
-        ctx.font = '900 85px Segoe UI, Tahoma, sans-serif'; 
+        ctx.font = '900 70px Segoe UI, Tahoma, sans-serif'; 
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(text, canvas.width / 2, canvas.height / 2);
@@ -162,11 +197,13 @@
     const cursorEl = document.getElementById('cursor');
     const volumeFill = document.getElementById('volume-fill');
     const zoomText = document.getElementById('zoom-val');
+    const commandBtns = document.querySelectorAll('.xel-btn');
 
     let handData = { x: 0, y: 0, z: 80, isFist: false, active: false };
     let smoothHand = { x: 0, y: 0, z: 80 };
     let orbitalSpeedX = 0;
     let orbitalSpeedY = 0;
+    let lastFistState = false;
 
     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
     hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.8, minTrackingConfidence: 0.8 });
@@ -175,22 +212,23 @@
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
             handData.active = true;
             const hand = results.multiHandLandmarks[0];
+            
+            // Inversión para efecto espejo y mapeo a pantalla
             handData.x = (1 - hand[9].x) * window.innerWidth;
             handData.y = hand[9].y * window.innerHeight;
 
-            // ROTACIÓN INVERTIDA (Horizontal)
+            // Rotación basada en posición del centro
             const offCenterX = (hand[9].x - 0.5) * 2; 
             orbitalSpeedY = offCenterX * 0.04; 
 
-            // ROTACIÓN INSTINTIVA SUTIL (Vertical)
             const offCenterY = (hand[9].y - 0.5) * 2;
-            orbitalSpeedX = offCenterY * 0.012; // Reducido para mayor sutileza
+            orbitalSpeedX = offCenterY * 0.012;
 
-            // ZOOM RE-CALIBRADO: 2.0x HUD = 1.3x Visual
+            // Zoom (Cerrar/Alejar mano)
             const volume = Math.hypot(hand[0].x - hand[9].x, hand[0].y - hand[9].y);
-            handData.z = THREE.MathUtils.mapLinear(volume, 0.08, 0.35, 80, 61.5);
-            handData.z = THREE.MathUtils.clamp(handData.z, 61.5, 80);
+            handData.z = THREE.MathUtils.clamp(THREE.MathUtils.mapLinear(volume, 0.08, 0.35, 80, 61.5), 61.5, 80);
 
+            // Detección de Puño (Click)
             const tips = [hand[8], hand[12], hand[16], hand[20]];
             const dist = tips.reduce((acc, tip) => acc + Math.hypot(tip.x - hand[0].x, tip.y - hand[0].y), 0) / 4;
             handData.isFist = dist < 0.22;
@@ -206,19 +244,16 @@
     });
     camUtils.start();
 
-    let lastFistState = false;
-
     function animate() {
         requestAnimationFrame(animate);
 
-        // Aplicar Rotación con Bloqueo de Seguridad (Clamp)
+        // Rotación de escena
         systemOrbitGroup.rotation.y += orbitalSpeedY;
-        
-        // Bloqueo de inclinación vertical a ±0.6 radianes (aprox ±35 grados)
         let nextRotX = systemOrbitGroup.rotation.x + orbitalSpeedX;
         systemOrbitGroup.rotation.x = THREE.MathUtils.clamp(nextRotX, -0.6, 0.6);
 
         if (handData.active) {
+            // Suavizado de cursor
             smoothHand.x += (handData.x - smoothHand.x) * 0.15;
             smoothHand.y += (handData.y - smoothHand.y) * 0.15;
             smoothHand.z += (handData.z - smoothHand.z) * 0.08;
@@ -233,29 +268,54 @@
 
             camera.position.z = smoothHand.z;
 
-            mouse.x = (smoothHand.x / window.innerWidth) * 2 - 1;
-            mouse.y = -(smoothHand.y / window.innerHeight) * 2 + 1;
-            raycaster.setFromCamera(mouse, camera);
+            // --- LÓGICA DE INTERACCIÓN CON EL DOCK (UI ESTÁTICA) ---
+            let onDockButton = false;
+            commandBtns.forEach(btn => {
+                const rect = btn.getBoundingClientRect();
+                if (smoothHand.x > rect.left && smoothHand.x < rect.right && 
+                    smoothHand.y > rect.top && smoothHand.y < rect.bottom) {
+                    
+                    onDockButton = true;
+                    btn.classList.add('hover-active');
 
-            const intersects = raycaster.intersectObjects(systemOrbitGroup.children);
-            systemOrbitGroup.children.forEach(p => {
-                if(p.userData.isHovered) {
-                    p.material.map = p.userData.texDefault;
-                    p.userData.isHovered = false;
+                    if (handData.isFist && !lastFistState) {
+                        window.open(btn.dataset.url, '_blank');
+                        lastFistState = true;
+                    }
+                } else {
+                    btn.classList.remove('hover-active');
                 }
             });
 
-            if (intersects.length > 0) {
-                const target = intersects[0].object;
-                if(!target.userData.isHovered) {
-                    target.material.map = target.userData.texHover;
-                    target.userData.isHovered = true;
-                }
-                if (handData.isFist && !lastFistState) {
-                    window.open(target.userData.url, '_blank');
-                    lastFistState = true;
+            // --- LÓGICA DE INTERACCIÓN 3D (Solo si no estamos sobre el Dock) ---
+            if (!onDockButton) {
+                mouse.x = (smoothHand.x / window.innerWidth) * 2 - 1;
+                mouse.y = -(smoothHand.y / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+
+                const intersects = raycaster.intersectObjects(systemOrbitGroup.children);
+                
+                // Limpiar hovers previos
+                systemOrbitGroup.children.forEach(p => {
+                    if(p.userData.isHovered) {
+                        p.material.map = p.userData.texDefault;
+                        p.userData.isHovered = false;
+                    }
+                });
+
+                if (intersects.length > 0) {
+                    const target = intersects[0].object;
+                    if(!target.userData.isHovered) {
+                        target.material.map = target.userData.texHover;
+                        target.userData.isHovered = true;
+                    }
+                    if (handData.isFist && !lastFistState) {
+                        window.open(target.userData.url, '_blank');
+                        lastFistState = true;
+                    }
                 }
             }
+
             if (!handData.isFist) lastFistState = false;
         }
 
